@@ -440,7 +440,7 @@ def sort_menu(storemenu, languages, indent, debug = False):
 
         for lang in languages.keys():
 
-            colorprint(Style.BRIGHT + Fore.RED, " " * 1 * indent + f" - Language {Fore.YELLOW + lang}:", "")
+            colorprint(Style.BRIGHT + Fore.WHITE, " " * 1 * indent + f" - Language [{" ".join([Fore.GREEN + "'" + language + "'" if lang == language else Fore.WHITE + language for language in languages])}{Fore.WHITE}]:", "")
 
             # Set locale.
             try:
