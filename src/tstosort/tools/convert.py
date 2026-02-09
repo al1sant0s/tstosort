@@ -229,6 +229,83 @@ def get_textpool(directory, lang, obj):
             return item_name
 
 
+def include_objects(directory, file_prefix, lang, objsets, include, items, indent):
+
+    if include.attrib["path"] is None:
+        return items
+
+    pathsplit = include.attrib["path"].split(":")
+    include_file = Path(directory, pathsplit[0].lower())
+
+    if include_file.exists() is False:
+        return items
+
+    if pathsplit[-1].capitalize() == "Objects":
+        return items
+
+
+    include_tree = ET.parse(include_file)
+    include_root = include_tree.getroot()
+    section = include_root
+
+    for element in pathsplit[2:]:
+        section = section.find(element) # type: ignore
+
+
+    if section is None:
+        return items
+
+
+    # Try to load a existing file for the language. Otherwise, create a new one.
+    target = Path(directory, file_prefix + lang + "_" + include_file.name)
+    root = ET.Element(include_root.tag, include_root.attrib)
+    tree = ET.ElementTree(root)
+
+    if target.exists() is True:
+        tree = ET.parse(target)
+        root = tree.getroot()
+
+
+    includes = root.find("AutoIncludes")
+    if includes is None:
+        includes = ET.SubElement(root, "AutoIncludes")
+
+
+    # Add all listed objects and object sets.
+    for obj in [element for element in section.findall("*") if element.tag.startswith("Object") or element.tag == "Include"]:
+
+        if obj.tag == "Include":
+            items = include_objects(directory, file_prefix, lang, objsets, obj, items, indent)
+            continue
+
+        sub_obj = obj
+
+        if obj.attrib.get("name") is None:
+            continue
+
+        if obj.tag != "Object":
+            sub_obj = objsets.get(obj.attrib["name"])
+            if sub_obj is None:
+                continue
+
+        if includes.find(obj.tag + obj.attrib["name"]) is None:
+            ET.SubElement(includes, obj.tag + obj.attrib["name"]).append(obj)
+
+        obj = ET.Element("Include", attrib = {"path": f"{target.name}:{root.tag}:AutoIncludes:{obj.tag + obj.attrib['name']}"})
+        obj.extend(list(include.findall("*")))
+
+
+        item_name = get_textpool(directory, lang, sub_obj)
+        items.append((obj, item_name))
+
+
+    # Store tree.
+    ET.indent(tree, " " * indent)
+    tree.write(target)
+
+    return items
+
+
 def map_objsets_to_objs(include, parent_dir):
 
     objsets = dict()
@@ -242,6 +319,7 @@ def map_objsets_to_objs(include, parent_dir):
 
     if submenu.exists() is False:
         return objsets
+
 
     if pathsplit[-1].capitalize() != "Objects":
         return objsets
@@ -261,7 +339,10 @@ def map_objsets_to_objs(include, parent_dir):
 
     for objset in section.findall("*"):
 
-        if objset.tag == "ScriptObject":
+        if objset.tag == "Include":
+            objsets.update(map_objsets_to_objs(objset, parent_dir))
+
+        elif objset.tag == "ScriptObject":
             obj = ET.Element("Object", attrib = {"id": "-1", "type": "scriptobject", "name": objset.attrib.get("name", ""), "title": objset.attrib.get("title", "")})
             objsets[objset.attrib.get("name")] = obj
 
@@ -306,74 +387,7 @@ def get_items_from_category(directory, file_prefix, category, items, objsets, la
 
     # Include objects.
     for include in category.findall("Include"):
-
-        if include.attrib["path"] is None:
-            continue
-
-        pathsplit = include.attrib["path"].split(":")
-        include_file = Path(directory, pathsplit[0].lower())
-
-        if include_file.exists() is False:
-            continue
-
-        if pathsplit[-1].capitalize() == "Objects":
-            continue
-
-
-        include_tree = ET.parse(include_file)
-        include_root = include_tree.getroot()
-        section = include_root
-
-        for element in pathsplit[2:]:
-            section = section.find(element) # type: ignore
-
-
-        if section is None:
-            continue
-
-
-        # Try to load a existing file for the language. Otherwise, create a new one.
-        target = Path(directory, file_prefix + lang + "_" + include_file.name)
-        root = ET.Element(include_root.tag, include_root.attrib)
-        tree = ET.ElementTree(root)
-
-        if target.exists() is True:
-            tree = ET.parse(target)
-            root = tree.getroot()
-
-
-        includes = root.find("AutoIncludes")
-        if includes is None:
-            includes = ET.SubElement(root, "AutoIncludes")
-
-
-        # Add all listed objects and object sets.
-        for obj in [element for element in section.findall("*") if element.tag.startswith("Object")]:
-            sub_obj = obj
-
-
-            if obj.attrib.get("name") is None:
-                continue
-
-            if obj.tag != "Object":
-                sub_obj = objsets.get(obj.attrib["name"])
-                if sub_obj is None:
-                    continue
-
-            if includes.find(obj.tag + obj.attrib["name"]) is None:
-                ET.SubElement(includes, obj.tag + obj.attrib["name"]).append(obj)
-
-            obj = ET.Element("Include", attrib = {"path": f"{target.name}:{root.tag}:AutoIncludes:{obj.tag + obj.attrib["name"]}"})
-            obj.extend(list(include.findall("*")))
-
-
-            item_name = get_textpool(directory, lang, sub_obj)
-            items.append((obj, item_name))
-
-
-        # Store tree.
-        ET.indent(tree, " " * indent)
-        tree.write(target)
+        items = include_objects(directory, file_prefix, lang, objsets, include, items, indent)
 
 
     return items
@@ -446,7 +460,8 @@ def sort_menu(storemenu, file_prefix, languages, indent, debug = False):
 
         for lang in languages.keys():
 
-            colorprint(Style.BRIGHT + Fore.WHITE, " " * 1 * indent + f" - Language [{" ".join([Fore.GREEN + "'" + language + "'" if lang == language else Fore.WHITE + language for language in languages])}{Fore.WHITE}]:", "")
+            language_name = ' '.join([Fore.GREEN + "'" + language + "'" if lang == language else Fore.WHITE + language for language in languages])
+            colorprint(Style.BRIGHT + Fore.WHITE, " " * 1 * indent + f" - Language [{language_name}]:", "")
 
             # Set locale.
             try:
